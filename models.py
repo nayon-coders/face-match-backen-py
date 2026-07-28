@@ -23,6 +23,10 @@ class Employee(Base):
 
     attendance_logs = relationship("AttendanceLog", back_populates="employee")
 
+    @property
+    def face_registered(self) -> bool:
+        return bool(self.face_encoding)
+
 class EmployeeField(Base):
     __tablename__ = "employee_fields"
 
@@ -62,6 +66,8 @@ class CompanySettings(Base):
     weekly_holiday = Column(String(50), default="Sunday")
     face_match_tolerance = Column(Float, default=0.6)
     attendance_radius_meters = Column(Float, default=100.0)
+    office_latitude = Column(Float, nullable=True)
+    office_longitude = Column(Float, nullable=True)
     working_days = Column(String(255), default="Mon,Tue,Wed,Thu,Fri,Sat")
     currency = Column(String(10), default="USD")
 

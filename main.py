@@ -210,9 +210,21 @@ def verify_face(
     is_match = face_service.verify_face(employee.face_encoding, image_bytes)
     
     print(f"DEBUG: verify_face returning match: {is_match}")
-    return {"match": is_match, "employee_id": employee_id}
+    return {"match": is_match, "employee_id": employee_id, "employee_name": employee.name}
 
 from datetime import date, datetime
+import math
+
+def calculate_haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371000 # Radius of earth in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_phi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 @app.post("/api/attendance/clock", response_model=schemas.AttendanceLogResponse)
 async def clock_in_out(
@@ -233,27 +245,32 @@ async def clock_in_out(
         db.commit()
         db.refresh(settings)
 
+    if settings.office_latitude is not None and settings.office_longitude is not None:
+        if latitude is None or longitude is None:
+            raise HTTPException(status_code=400, detail="GPS location is required for clocking in/out (Geofencing enabled)")
+        dist = calculate_haversine_distance(latitude, longitude, settings.office_latitude, settings.office_longitude)
+        if dist > (settings.attendance_radius_meters or 100.0):
+            raise HTTPException(status_code=403, detail=f"You are {int(dist)}m away from office. Permitted radius is {int(settings.attendance_radius_meters or 100)}m.")
+
     today = date.today()
     now = datetime.now()
-    
-    # Find today's log
-    log = db.query(models.AttendanceLog).filter(
-        models.AttendanceLog.employee_id == employee_id,
-        models.AttendanceLog.date >= datetime(today.year, today.month, today.day)
-    ).first()
 
     if type == 'clock_in':
-        if log and log.clock_in_time:
-            raise HTTPException(status_code=400, detail="Already clocked in today")
+        active_log = db.query(models.AttendanceLog).filter(
+            models.AttendanceLog.employee_id == employee_id,
+            models.AttendanceLog.date >= datetime(today.year, today.month, today.day),
+            models.AttendanceLog.clock_out_time == None
+        ).first()
+
+        if active_log:
+            raise HTTPException(status_code=400, detail="Already clocked in. Please clock out first.")
             
-        # Check Late status
         start_time_str = settings.office_start_time
         time_parts = start_time_str.split(':')
         start_hour = int(time_parts[0]) if len(time_parts) > 0 else 9
         start_minute = int(time_parts[1]) if len(time_parts) > 1 else 0
         expected_start = datetime(today.year, today.month, today.day, start_hour, start_minute)
         
-        # Add grace period
         from datetime import timedelta
         grace_period = timedelta(minutes=settings.late_after_minutes)
         
@@ -273,22 +290,25 @@ async def clock_in_out(
         return new_log
         
     elif type == 'clock_out':
-        if not log or not log.clock_in_time:
-            raise HTTPException(status_code=400, detail="Cannot clock out without clocking in")
-        if log.clock_out_time:
-            raise HTTPException(status_code=400, detail="Already clocked out today")
+        active_log = db.query(models.AttendanceLog).filter(
+            models.AttendanceLog.employee_id == employee_id,
+            models.AttendanceLog.date >= datetime(today.year, today.month, today.day),
+            models.AttendanceLog.clock_out_time == None
+        ).first()
+
+        if not active_log:
+            raise HTTPException(status_code=400, detail="No active clock-in found. Please clock in first.")
             
-        log.clock_out_time = now
-        log.latitude_out = latitude
-        log.longitude_out = longitude
+        active_log.clock_out_time = now
+        active_log.latitude_out = latitude
+        active_log.longitude_out = longitude
         
-        # Calculate working hours
-        diff = log.clock_out_time - log.clock_in_time
-        log.working_hours = diff.total_seconds() / 3600.0
+        diff = active_log.clock_out_time - active_log.clock_in_time
+        active_log.working_hours = diff.total_seconds() / 3600.0
         
         db.commit()
-        db.refresh(log)
-        return log
+        db.refresh(active_log)
+        return active_log
     else:
         raise HTTPException(status_code=400, detail="Invalid clock type")
 
@@ -299,10 +319,15 @@ def get_employee_dashboard(employee_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Employee not found")
 
     today = date.today()
-    log = db.query(models.AttendanceLog).filter(
+    active_log = db.query(models.AttendanceLog).filter(
+        models.AttendanceLog.employee_id == employee_id,
+        models.AttendanceLog.date >= datetime(today.year, today.month, today.day),
+        models.AttendanceLog.clock_out_time == None
+    ).first()
+    log = active_log or db.query(models.AttendanceLog).filter(
         models.AttendanceLog.employee_id == employee_id,
         models.AttendanceLog.date >= datetime(today.year, today.month, today.day)
-    ).first()
+    ).order_by(models.AttendanceLog.date.desc()).first()
 
     status = "Absent"
     clock_in = None
@@ -320,11 +345,14 @@ def get_employee_dashboard(employee_id: int, db: Session = Depends(get_db)):
             working_hours = round(diff.total_seconds() / 3600.0, 2)
 
     return {
+        "employee_name": employee.name,
+        "designation": employee.designation,
         "status": status,
+        "has_active_clock_in": bool(log and log.clock_in_time and not log.clock_out_time),
         "clock_in_time": clock_in,
         "clock_out_time": clock_out,
         "working_hours": working_hours,
-        "leave_balance": 14 # Mocked for now
+        "leave_balance": 14
     }
 
 @app.get("/api/employee/{employee_id}/attendance/history")
@@ -375,6 +403,111 @@ def get_attendance_logs(
         query = query.filter(models.AttendanceLog.date <= end_date)
         
     return query.order_by(models.AttendanceLog.date.desc()).offset(skip).limit(limit).all()
+
+@app.post("/api/attendance/manual", response_model=schemas.AttendanceLogResponse)
+def create_manual_attendance(log_data: schemas.AttendanceLogCreate, db: Session = Depends(get_db)):
+    employee = db.query(models.Employee).filter(models.Employee.id == log_data.employee_id).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    new_log = models.AttendanceLog(**log_data.dict())
+    db.add(new_log)
+    db.commit()
+    db.refresh(new_log)
+    return new_log
+
+@app.put("/api/attendance/{log_id}", response_model=schemas.AttendanceLogResponse)
+def update_attendance_log(log_id: int, log_data: schemas.AttendanceLogCreate, db: Session = Depends(get_db)):
+    log = db.query(models.AttendanceLog).filter(models.AttendanceLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Attendance log not found")
+    for key, val in log_data.dict(exclude_unset=True).items():
+        setattr(log, key, val)
+    db.commit()
+    db.refresh(log)
+    return log
+
+@app.get("/api/dashboard/admin-stats")
+def get_admin_dashboard_stats(db: Session = Depends(get_db)):
+    total_employees = db.query(models.Employee).count()
+    face_registered_employees = db.query(models.Employee).filter(models.Employee.face_encoding != None).count()
+    
+    today = date.today()
+    today_start = datetime(today.year, today.month, today.day)
+    today_logs = db.query(models.AttendanceLog).filter(models.AttendanceLog.date >= today_start).all()
+    
+    total_present = sum(1 for l in today_logs if l.status == "Present")
+    total_late = sum(1 for l in today_logs if l.status == "Late")
+    total_absent = max(0, total_employees - (total_present + total_late))
+    
+    active_clock_ins = sum(1 for l in today_logs if l.clock_in_time and not l.clock_out_time)
+    
+    total_clients = db.query(pm_models.Client).filter(pm_models.Client.deleted_at == None).count()
+    total_projects = db.query(pm_models.Project).filter(pm_models.Project.deleted_at == None).count()
+    total_services = db.query(pm_models.Service).filter(pm_models.Service.deleted_at == None).count()
+    
+    # Project status counts
+    all_projects = db.query(pm_models.Project).filter(pm_models.Project.deleted_at == None).all()
+    project_status_counts = {}
+    for p in all_projects:
+        st = p.project_status or "Not Started"
+        project_status_counts[st] = project_status_counts.get(st, 0) + 1
+        
+    # Recent projects
+    recent_projects = db.query(pm_models.Project).filter(pm_models.Project.deleted_at == None).order_by(pm_models.Project.id.desc()).limit(5).all()
+    recent_projects_data = [{
+        "id": p.id,
+        "project_code": p.project_code,
+        "project_title": p.project_title,
+        "status": p.project_status,
+        "start_date": p.project_start_date.strftime("%Y-%m-%d") if p.project_start_date else "N/A",
+        "deadline": p.expected_end_date.strftime("%Y-%m-%d") if p.expected_end_date else "N/A",
+        "total_budget": p.budget or 0,
+        "client_id": p.client_id
+    } for p in recent_projects]
+    
+    # Recent clients
+    recent_clients = db.query(pm_models.Client).filter(pm_models.Client.deleted_at == None).order_by(pm_models.Client.id.desc()).limit(5).all()
+    recent_clients_data = [{
+        "id": c.id,
+        "client_code": c.client_code,
+        "display_name": c.display_name,
+        "email": c.email,
+        "client_type": c.client_type,
+        "status": c.status
+    } for c in recent_clients]
+
+    # Recent attendance logs today
+    recent_logs_data = []
+    for l in sorted(today_logs, key=lambda x: x.clock_in_time or x.date, reverse=True)[:5]:
+        emp = l.employee
+        recent_logs_data.append({
+            "id": l.id,
+            "employee_id": l.employee_id,
+            "employee_name": emp.name if emp else "Unknown",
+            "designation": emp.designation if emp else "",
+            "status": l.status,
+            "clock_in_time": l.clock_in_time.strftime("%I:%M %p") if l.clock_in_time else "N/A",
+            "clock_out_time": l.clock_out_time.strftime("%I:%M %p") if l.clock_out_time else "N/A",
+            "working_hours": round(l.working_hours, 2)
+        })
+
+    return {
+        "total_employees": total_employees,
+        "face_registered_employees": face_registered_employees,
+        "today_attendance": {
+            "total_present": total_present,
+            "total_late": total_late,
+            "total_absent": total_absent,
+            "active_clock_ins": active_clock_ins,
+            "recent_logs": recent_logs_data
+        },
+        "total_clients": total_clients,
+        "total_projects": total_projects,
+        "total_services": total_services,
+        "project_status_counts": project_status_counts,
+        "recent_projects": recent_projects_data,
+        "recent_clients": recent_clients_data
+    }
 
 @app.get("/api/settings", response_model=schemas.CompanySettingsResponse)
 def get_settings(db: Session = Depends(get_db)):

@@ -65,6 +65,7 @@ class AttendanceLogResponse(AttendanceLogBase):
 class FaceVerifyResponse(BaseModel):
     match: bool
     employee_id: int
+    employee_name: str = ""
 
 class CompanySettingsBase(BaseModel):
     office_start_time: str
@@ -75,6 +76,8 @@ class CompanySettingsBase(BaseModel):
     weekly_holiday: str
     face_match_tolerance: float
     attendance_radius_meters: float
+    office_latitude: Optional[float] = None
+    office_longitude: Optional[float] = None
     working_days: str
     currency: str = "USD"
 
