@@ -17,7 +17,7 @@ class EmployeeResponse(EmployeeBase):
     id: int
     nid_front_path: Optional[str] = None
     nid_back_path: Optional[str] = None
-    face_registered: bool
+    face_registered: Optional[bool] = False
     dynamic_data: Optional[str] = None
     created_at: datetime
 
