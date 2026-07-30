@@ -6,9 +6,9 @@ class EmployeeBase(BaseModel):
     name: str
     phone: str
     email: str
-    designation: str
-    salary: float
-    salary_type: str
+    designation: Optional[str] = ""
+    salary: Optional[float] = 0.0
+    salary_type: Optional[str] = ""
 
 class EmployeeCreate(EmployeeBase):
     pass
@@ -45,8 +45,8 @@ class AttendanceLogBase(BaseModel):
     date: datetime
     clock_in_time: Optional[datetime] = None
     clock_out_time: Optional[datetime] = None
-    status: str
-    working_hours: float = 0.0
+    status: Optional[str] = "Present"
+    working_hours: Optional[float] = 0.0
     latitude_in: Optional[float] = None
     longitude_in: Optional[float] = None
     latitude_out: Optional[float] = None

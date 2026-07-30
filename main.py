@@ -338,7 +338,7 @@ def get_employee_dashboard(employee_id: int, db: Session = Depends(get_db)):
         status = log.status
         clock_in = log.clock_in_time.strftime("%I:%M %p") if log.clock_in_time else None
         clock_out = log.clock_out_time.strftime("%I:%M %p") if log.clock_out_time else None
-        working_hours = round(log.working_hours, 2)
+        working_hours = round(log.working_hours or 0.0, 2)
         if log.clock_in_time and not log.clock_out_time:
             # Calculate current working hours if still clocked in
             diff = datetime.now() - log.clock_in_time
@@ -366,7 +366,7 @@ def get_attendance_history(employee_id: int, db: Session = Depends(get_db)):
         "status": log.status,
         "clock_in_time": log.clock_in_time.strftime("%I:%M %p") if log.clock_in_time else None,
         "clock_out_time": log.clock_out_time.strftime("%I:%M %p") if log.clock_out_time else None,
-        "working_hours": round(log.working_hours, 2)
+        "working_hours": round(log.working_hours or 0.0, 2)
     } for log in logs]
 
 @app.get("/api/attendance/status/{employee_id}")
@@ -488,7 +488,7 @@ def get_admin_dashboard_stats(db: Session = Depends(get_db)):
             "status": l.status,
             "clock_in_time": l.clock_in_time.strftime("%I:%M %p") if l.clock_in_time else "N/A",
             "clock_out_time": l.clock_out_time.strftime("%I:%M %p") if l.clock_out_time else "N/A",
-            "working_hours": round(l.working_hours, 2)
+            "working_hours": round(l.working_hours or 0.0, 2)
         })
 
     return {
