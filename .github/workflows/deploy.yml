@@ -1,0 +1,25 @@
+name: Deploy HRM Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /var/www/karalasoft/hrm/backend
+            git pull origin main
+            pm2 restart hrm-backend
+            pm2 save
+            echo "✅ Deploy complete!"
