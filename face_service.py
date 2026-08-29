@@ -147,3 +147,42 @@ def verify_face(known_encoding_json: str, unknown_image_bytes: bytes, threshold:
     except Exception as e:
         print(f"Error verifying face: {e}")
         return False
+
+def match_two_images(image1_bytes: bytes, image2_bytes: bytes, threshold: float = 0.68) -> dict:
+    """
+    Extracts face encodings from two images and compares them.
+    Returns a dict with 'match', 'distance', 'error' (if any).
+    """
+    print("DEBUG: match_two_images called")
+    try:
+        # Get encoding of image 1
+        encoding1_json = get_face_encoding(image1_bytes)
+        if not encoding1_json:
+            return {"match": False, "error": "No face found in image 1"}
+            
+        encoding1 = json.loads(encoding1_json)
+        
+        # Get encoding of image 2
+        encoding2_json = get_face_encoding(image2_bytes)
+        if not encoding2_json:
+            return {"match": False, "error": "No face found in image 2"}
+            
+        encoding2 = json.loads(encoding2_json)
+        
+        # Calculate Cosine Distance
+        A = np.array(encoding1)
+        B = np.array(encoding2)
+        
+        cosine_similarity = np.dot(A, B) / (np.linalg.norm(A) * np.linalg.norm(B))
+        distance = 1 - cosine_similarity
+        
+        print(f"DEBUG: ArcFace 1:1 Compare result distance: {distance:.4f}, threshold: {threshold}")
+        
+        return {
+            "match": bool(distance <= threshold),
+            "distance": float(distance),
+            "error": None
+        }
+    except Exception as e:
+        print(f"Error matching images: {e}")
+        return {"match": False, "error": str(e)}

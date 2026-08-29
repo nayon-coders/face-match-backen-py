@@ -43,7 +43,7 @@ class ClientUpdate(ClientBase):
 
 class ClientResponse(ClientBase, AuditResponse):
     client_code: str
-    credit_limit: float
+    api_key: str
     
     class Config:
         from_attributes = True
