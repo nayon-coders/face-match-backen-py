@@ -26,6 +26,10 @@ app.add_middleware(
 
 app.include_router(clients.router, prefix="/api")
 
+@app.get("/")
+def root():
+    return {"status": "success", "message": "FaceMatch Attendance API Server is running."}
+
 @app.on_event("startup")
 def startup_event():
     print("DEBUG: Running startup event...")
