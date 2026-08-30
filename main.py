@@ -18,7 +18,7 @@ os.makedirs("uploads", exist_ok=True)
 # Setup CORS for the Admin Panel
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["http://localhost:5173", "https://hrm.karalasoft.com", "http://localhost:8000"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
